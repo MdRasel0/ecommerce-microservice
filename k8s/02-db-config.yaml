@@ -1,0 +1,11 @@
+# Connection info for the standalone Postgres instance (runs outside this cluster).
+# One Postgres server hosting three databases: productdb, orderdb, userdb.
+# Edit DB_HOST (and DB_PORT if not 5432) to point at your standalone instance before applying.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+  namespace: ecommerce
+data:
+  DB_HOST: "CHANGE_ME"
+  DB_PORT: "5432"

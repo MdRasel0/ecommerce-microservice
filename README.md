@@ -93,6 +93,104 @@ All use:
 - Username: `postgres`
 - Password: `postgres`
 
+## ☸️ Kubernetes Deployment (Standalone Database)
+
+The manifests in [`k8s/`](k8s/) deploy the frontend, API gateway, and all three microservices to a cluster, while Postgres runs **standalone** (outside the cluster) — you point the services at it via a ConfigMap.
+
+### Prerequisites
+- A running Kubernetes cluster (Minikube, k3s, EKS, etc.) and `kubectl` configured against it
+- A standalone Postgres instance reachable from the cluster's nodes
+- Docker, to build the service images
+
+### Step 1 — Create the databases on the standalone Postgres instance
+
+One Postgres server hosts three separate databases. Connect to it (e.g. `psql -h <host> -U postgres`) and run:
+
+```sql
+CREATE DATABASE productdb;
+CREATE DATABASE orderdb;
+CREATE DATABASE userdb;
+```
+
+### Step 2 — Build the service images
+
+Each Deployment expects an image tagged `:k8s`. Build them from the repo root:
+
+```bash
+docker build -t product-service:k8s ./backend/product-service
+docker build -t order-service:k8s ./backend/order-service
+docker build -t user-service:k8s ./backend/user-service
+docker build -t api-gateway:k8s ./backend/api-gateway
+docker build -t frontend:k8s ./frontend
+```
+
+If your cluster can't see local images (e.g. Minikube), load them in, or push them to a registry the cluster can pull from and update `image:` in the `k8s/2x-*.yaml` files accordingly:
+
+```bash
+minikube image load product-service:k8s
+minikube image load order-service:k8s
+minikube image load user-service:k8s
+minikube image load api-gateway:k8s
+minikube image load frontend:k8s
+```
+
+### Step 3 — Point the manifests at your standalone database
+
+Edit [`k8s/02-db-config.yaml`](k8s/02-db-config.yaml) and replace `DB_HOST` (currently `CHANGE_ME`) with your standalone Postgres host, and `DB_PORT` if it isn't `5432`.
+
+If the standalone instance uses different credentials than the default `postgres`/`postgres`, update [`k8s/01-secrets.yaml`](k8s/01-secrets.yaml) too.
+
+### Step 4 — Apply the manifests, in order
+
+```bash
+kubectl apply -f k8s/00-namespace.yaml
+kubectl apply -f k8s/01-secrets.yaml
+kubectl apply -f k8s/02-db-config.yaml
+kubectl apply -f k8s/20-product-service.yaml
+kubectl apply -f k8s/21-order-service.yaml
+kubectl apply -f k8s/22-user-service.yaml
+kubectl apply -f k8s/23-api-gateway.yaml
+kubectl apply -f k8s/30-frontend.yaml
+kubectl apply -f k8s/40-ingress.yaml
+```
+
+Or apply the whole directory at once (kubectl sorts by filename, which matches the numeric prefixes):
+
+```bash
+kubectl apply -f k8s/
+```
+
+### Step 5 — Verify
+
+```bash
+kubectl get pods -n ecommerce
+kubectl get svc -n ecommerce
+```
+
+All pods should reach `Running`/`Ready`. If a service pod isn't becoming ready, check that it can reach the standalone database:
+
+```bash
+kubectl logs -n ecommerce deployment/product-service
+```
+
+### Step 6 — Access the application
+
+- Via the Ingress (requires a Traefik ingress controller, matching `ingressClassName: traefik` in [`k8s/40-ingress.yaml`](k8s/40-ingress.yaml)): visit the ingress's external address.
+- Or port-forward for a quick local check:
+
+```bash
+kubectl port-forward -n ecommerce svc/frontend 3000:80
+kubectl port-forward -n ecommerce svc/api-gateway 8080:8080
+```
+
+Then open http://localhost:3000.
+
+### Kubernetes Troubleshooting
+
+- **Pods stuck in `CrashLoopBackOff`**: `kubectl logs -n ecommerce <pod-name>` — usually a database connection error, meaning `DB_HOST`/`DB_PORT` in `db-config` is wrong or the standalone DB isn't reachable from the cluster network.
+- **`ImagePullBackOff`**: the cluster can't see the `:k8s` images — load/push them as in Step 2.
+- **Readiness probe failing**: the service's `/actuator/health/readiness` isn't returning healthy yet — check logs for startup errors, often a database auth or connectivity issue.
+
 ## 🧪 Testing the Application
 
 ### 1. Create a User Account
